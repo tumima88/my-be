@@ -6,6 +6,7 @@ import google.generativeai as genai
 import base64
 import json
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware # Import CORS
 from pydantic import BaseModel
 from typing import List
 from firebase_admin import credentials, firestore
@@ -51,6 +52,18 @@ if GEMINI_API_KEY:
 else:
     print("⚠️ Gemini AI key not found. Proxy will not function.")
 
+# --- FastAPI App ---
+app = FastAPI()
+
+# --- ADD THIS: CORS Middleware ---
+# This allows your frontend to make requests to your backend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # --- Pydantic Models ---
 class CartItem(BaseModel):
@@ -87,33 +100,19 @@ def capture_paypal_order(order_id: str):
     except requests.exceptions.HTTPError as err:
         raise HTTPException(status_code=500, detail=f"Failed to capture PayPal order: {err.response.text}")
 
-# --- FastAPI App ---
-app = FastAPI()
-
+# --- API Endpoints ---
 @app.get("/")
 def read_root():
     return {"message": "Server is running"}
 
-# --- MODIFIED: Added page and page_size parameters ---
 @app.get("/api/products")
 def get_products(page: int = 1, page_size: int = 50):
-    """
-    Fetches products from Firestore with pagination.
-    - page: The page number to retrieve.
-    - page_size: The number of products per page.
-    """
     if not db:
         raise HTTPException(status_code=500, detail="Database not connected")
     try:
         products_ref = db.collection('products')
-        
-        # Calculate the starting point (offset)
-        offset = (page - 1) * page_size
-        
-        # Query the database with ordering, offset, and limit
-        query = products_ref.order_by('name').limit(page_size).offset(offset)
+        query = products_ref.order_by('name').limit(page_size).offset((page - 1) * page_size)
         docs = query.stream()
-
         products = [{"id": doc.id, **doc.to_dict()} for doc in docs]
         return products
     except Exception as e:
