@@ -3,6 +3,8 @@ import firebase_admin
 import requests
 import os
 import google.generativeai as genai
+import base64
+import json
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List
@@ -11,12 +13,26 @@ from dotenv import load_dotenv
 
 # --- Initialization ---
 load_dotenv()
-
-# Firebase
 db = None
+
+# --- Firebase Initialization (for Deployment) ---
 try:
-    cred = credentials.Certificate("serviceAccountKey.json")
-    firebase_admin.initialize_app(cred)
+    # Get the base64 encoded string from environment variables
+    firebase_creds_b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_BASE64")
+    if firebase_creds_b64:
+        # Decode the base64 string to bytes, then decode bytes to a normal string
+        creds_json_str = base64.b64decode(firebase_creds_b64).decode('utf-8')
+        # Load the string as a dictionary
+        creds_dict = json.loads(creds_json_str)
+        # Initialize with the dictionary
+        cred = credentials.Certificate(creds_dict)
+    else:
+        # Fallback for local development
+        cred = credentials.Certificate("serviceAccountKey.json")
+
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(cred)
+    
     db = firestore.client()
     print("✅ Firebase connection successful.")
 except Exception as e:
@@ -32,8 +48,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Configure Gemini AI
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    print("✅ Gemini AI client configured.")
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        print("✅ Gemini AI client configured.")
+    except Exception as e:
+        print(f"🔥 Gemini AI configuration failed: {e}")
 else:
     print("⚠️ Gemini AI key not found. Proxy will not function.")
 
@@ -51,7 +70,7 @@ class GeminiRequest(BaseModel):
     prompt: str
 
 
-# --- Helper Functions ---
+# --- PayPal Helper Functions ---
 def get_paypal_access_token():
     auth = (PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET)
     headers = {"Accept": "application/json", "Accept-Language": "en_US"}
@@ -72,7 +91,6 @@ def capture_paypal_order(order_id: str):
         return response.json()
     except requests.exceptions.HTTPError as err:
         raise HTTPException(status_code=500, detail=f"Failed to capture PayPal order: {err.response.text}")
-
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -140,6 +158,3 @@ def generate_gemini_email(request: GeminiRequest):
         return {"success": True, "emailContent": response.text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate email content: {e}")
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
