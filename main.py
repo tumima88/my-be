@@ -5,7 +5,7 @@ import os
 import google.generativeai as genai
 import base64
 import json
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import List
 from firebase_admin import credentials, firestore
@@ -15,19 +15,14 @@ from dotenv import load_dotenv
 load_dotenv()
 db = None
 
-# --- Firebase Initialization (for Deployment) ---
+# Firebase Initialization (for Deployment)
 try:
-    # Get the base64 encoded string from environment variables
     firebase_creds_b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_BASE64")
     if firebase_creds_b64:
-        # Decode the base64 string to bytes, then decode bytes to a normal string
         creds_json_str = base64.b64decode(firebase_creds_b64).decode('utf-8')
-        # Load the string as a dictionary
         creds_dict = json.loads(creds_json_str)
-        # Initialize with the dictionary
         cred = credentials.Certificate(creds_dict)
     else:
-        # Fallback for local development
         cred = credentials.Certificate("serviceAccountKey.json")
 
     if not firebase_admin._apps:
@@ -99,13 +94,28 @@ app = FastAPI()
 def read_root():
     return {"message": "Server is running"}
 
+# --- MODIFIED: Added page and page_size parameters ---
 @app.get("/api/products")
-def get_products():
+def get_products(page: int = 1, page_size: int = 50):
+    """
+    Fetches products from Firestore with pagination.
+    - page: The page number to retrieve.
+    - page_size: The number of products per page.
+    """
     if not db:
         raise HTTPException(status_code=500, detail="Database not connected")
     try:
-        docs = db.collection('products').stream()
-        return [{"id": doc.id, **doc.to_dict()} for doc in docs]
+        products_ref = db.collection('products')
+        
+        # Calculate the starting point (offset)
+        offset = (page - 1) * page_size
+        
+        # Query the database with ordering, offset, and limit
+        query = products_ref.order_by('name').limit(page_size).offset(offset)
+        docs = query.stream()
+
+        products = [{"id": doc.id, **doc.to_dict()} for doc in docs]
+        return products
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch products: {e}")
 
